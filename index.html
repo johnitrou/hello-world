@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<head>
+<title>Time Use Simulation</title>
+</head>
+<meta charset="utf-8">
+<style>
+
+.node {
+  stroke-width: 1.5px;
+}
+
+</style>
+<body>
+   
+<!-- Connecting with D3 library-->
+<script src="https://d3js.org/d3.v3.min.js" charset="utf-8"></script>
+  
+<div id="main-wrapper">
+<div id="sidebar">
+<div id="current_time">4:00am</div>
+<div id="speed">
+<div class="togglebutton slow current" data-val="slow">Slow</div>
+<div class="togglebutton medium" data-val="medium">Medium</div>
+<div class="togglebutton fast" data-val="fast">Fast</div>
+<div class="clr"></div>
+</div>
+<div id="note"></div>
+</div>
+<div id="chart"></div>
+<div class="clr"></div>
+</div>
+
+ 
+<script>
+var USER_SPEED = "slow";
+
+var width = 780,
+    height = 800,
+	padding = 10,
+	maxRadius = 1000;
+	// color = d3.scale.category10();
+	
+var sched_objs = [],
+	curr_minute = 0;
+
+ 
+// use 1-7
+
+var act_codes = [
+	{"index": "0", "short": "Kein Radio", "desc": "Kein Radio"},
+	{"index": "1", "short": "SRF 1", "desc": "SRF 1"},
+	{"index": "2", "short": "SRF 2 Kultur", "desc": "SRF 2 Kultur"},
+	{"index": "3", "short": "SRF 3", "desc": "SRF 3"},
+	{"index": "4", "short": "SRF 4 News", "desc": "SRF 4 News"},
+	{"index": "5", "short": "SRF Musikwelle", "desc": "SRF Musikwelle"},
+	{"index": "6", "short": "SRF Virus", "desc": "SRF Virus"},
+	{"index": "7", "short": "Private", "desc": "Private"},
+	{"index": "8", "short": "SSat-Radios", "desc": "SSat-Radios"},
+	{"index": "9", "short": "Ausland", "desc": "Ausland"},
+];
+
+
+var speeds = { "slow": 1000, "medium": 200, "fast": 50 };
+
+// Simulationsstart um 4.00 a.m.
+
+var time_notes = [
+	{ "start_minute": 1, "stop_minute": 40, "note": "Simulations-Start." },
+	{ "start_minute": 70, "stop_minute": 120, "note": "Most people are still sleeping this early in the morning, but some are already at work or preparing for the day." },
+	{ "start_minute": 180, "stop_minute": 300, "note": "It's wake up time for most. Time to start the day with morning rituals, breakfast and a wonderful commute." },
+	{ "start_minute": 360, "stop_minute": 440, "note": "The day is in full swing with work or housework. Stores and services are open so people can run errands, and they take various forms of transportation to get there." },
+	{ "start_minute": 480, "stop_minute": 540, "note": "Lunch hour. Many go eat, but there's still activity throughout. You see a small shift at the end of the hour." },
+	{ "start_minute": 660, "stop_minute": 720, "note": "Coffee break? Again, at the top of the hour, you see a shift in activity." },
+	{ "start_minute": 780, "stop_minute": 830, "note": "With the work day done, it's time to commute home and fix dinner or go out for a while." },
+	{ "start_minute": 870, "stop_minute": 890, "note": "Echo der Zeit" },
+	{ "start_minute": 930, "stop_minute": 1010, "note": "Dinner's done. Time for relaxation, TV, games, hobbies and socializing." },
+	{ "start_minute": 1080, "stop_minute": 1140, "note": "Winding down for the day. From leisure time, people shift to personal care and sleep." },
+	{ "start_minute": 1210, "stop_minute": 1300, "note": "Goodnight. More than 80% of people are asleep and it peaks at 96% around 3:00am." },
+];
+var notes_index = 0;
+
+
+  
+// Activity to put in center of circle arrangement
+var center_act = "Kein Radio",
+	center_pt = { "x": 380, "y": 365 };
+
+  
+    
+
+// Coordinates for activities
+var foci = {};
+act_codes.forEach(function(code, i) {
+	if (code.desc == center_act) {
+		foci[code.index] = center_pt;
+	} else {
+		var theta = 2 * Math.PI / (act_codes.length-1);
+		foci[code.index] = {x: 250 * Math.cos(i * theta)+380, y: 250 * Math.sin(i * theta)+365 };
+	}
+});
+
+
+// Start the SVG
+var svg = d3.select("#chart").append("svg")
+    .attr("width", width)
+    .attr("height", height);
+  
+  
+/* 	
+Each row represents one person. 
+The encoding is activity code first, 
+and then how many minutes. 
+Then next activity code, 
+and then how many minutes. 
+This is specific to that visualization 
+though and will likely be handled 
+in different ways for different datasets.
+rowSum = 1440 Minutes -> Logic: Sender, Minuten, ... / Person je Zeile
+*/
+
+
+  
+//Data loading    
+
+d3.csv('https://raw.githubusercontent.com/johnitrou/hello-world/master/test_pin.csv', function(data) {
+	data.forEach(function(d) {
+		console.log(d)
+		var day_array = d.day.split(",");
+		var activities = [];
+		for (var i=0; i < day_array.length; i++) {
+			// Duration
+			if (i % 2 == 1) {
+				activities.push({'act': day_array[i-1], 'duration': +day_array[i]});
+			}
+		}
+		sched_objs.push(activities);
+	}); 
+
+  
+	// Used for percentages by minute
+	var act_counts = {"0": 0, "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0, "8": 0, "9": 0, "10": 0, "11": 0, "12": 0, "13": 0, "14": 0, "15": 0, "16": 0 };
+	
+  	// A node for each person's schedule
+	var nodes = sched_objs.map(function(o,i) {
+		var act = o[0].act;
+		act_counts[act] += 1;
+		var init_x = foci[act].x + Math.random();
+		var init_y = foci[act].y + Math.random();
+		return {
+			act: act,
+			radius: 4,
+			x: init_x,
+			y: init_y,
+			color: color(act),
+			moves: 0,
+			next_move_time: o[0].duration,
+			sched: o,
+		}
+	});
+  
+  
+  	var force = d3.layout.force()
+		.nodes(nodes)
+		.size([width, height])
+		// .links([])
+		.gravity(0)
+		.charge(0)
+		.friction(0.5)
+		.on("tick", tick)
+		.start();
+
+	var circle = svg.selectAll("circle")
+		.data(nodes)
+	  .enter().append("circle")
+		.attr("r", function(d) { return d.radius; })
+		.style("fill", function(d) { return d.color; });
+		// .call(force.drag);
+	
+	// Activity labels
+	var label = svg.selectAll("text")
+		.data(act_codes)
+	  .enter().append("text")
+		.attr("class", "actlabel")
+		.attr("x", function(d, i) {
+			if (d.desc == center_act) {
+				return center_pt.x;
+			} else {
+				var theta = 2 * Math.PI / (act_codes.length-1);
+				return 340 * Math.cos(i * theta)+380;
+			}
+			
+		})
+		.attr("y", function(d, i) {
+			if (d.desc == center_act) {
+				return center_pt.y;
+			} else {
+				var theta = 2 * Math.PI / (act_codes.length-1);
+				return 340 * Math.sin(i * theta)+365;
+			}
+			
+		});
+  
+  
+  	label.append("tspan")
+		.attr("x", function() { return d3.select(this.parentNode).attr("x"); })
+		// .attr("dy", "1.3em")
+		.attr("text-anchor", "middle")
+		.text(function(d) {
+			return d.short;
+		});
+	label.append("tspan")
+		.attr("dy", "1.3em")
+		.attr("x", function() { return d3.select(this.parentNode).attr("x"); })
+		.attr("text-anchor", "middle")
+		.attr("class", "actpct")
+		.text(function(d) {
+			return act_counts[d.index] + "%";
+		});
+	
+  
+  	// Update nodes based on activity and duration
+	function timer() {
+		d3.range(nodes.length).map(function(i) {
+			var curr_node = nodes[i],
+				curr_moves = curr_node.moves; 
+
+			// Time to go to next activity
+			if (curr_node.next_move_time == curr_minute) {
+				if (curr_node.moves == curr_node.sched.length-1) {
+					curr_moves = 0;
+				} else {
+					curr_moves += 1;
+				}
+			
+				// Subtract from current activity count
+				act_counts[curr_node.act] -= 1;
+			
+				// Move on to next activity
+				curr_node.act = curr_node.sched[ curr_moves ].act;
+			
+				// Add to new activity count
+				act_counts[curr_node.act] += 1;
+			
+				curr_node.moves = curr_moves;
+				curr_node.cx = foci[curr_node.act].x;
+				curr_node.cy = foci[curr_node.act].y;
+			
+				nodes[i].next_move_time += nodes[i].sched[ curr_node.moves ].duration;
+			}
+
+		});
+
+		force.resume();
+		curr_minute += 1;
+
+    
+ 		// Update percentages
+		label.selectAll("tspan.actpct")
+			.text(function(d) {
+				return readablePercent(act_counts[d.index]);
+			});
+	
+		// Update time
+		var true_minute = curr_minute % 1440;
+		d3.select("#current_time").text(minutesToTime(true_minute));
+		
+		// Update notes
+		// var true_minute = curr_minute % 1440;
+		if (true_minute == time_notes[notes_index].start_minute) {
+			d3.select("#note")
+				.style("top", "0px")
+			  .transition()
+				.duration(600)
+				.style("top", "20px")
+				.style("color", "#000000")
+				.text(time_notes[notes_index].note);
+		} 
+	
+		// Make note disappear at the end.
+		else if (true_minute == time_notes[notes_index].stop_minute) {
+			
+			d3.select("#note").transition()
+				.duration(1000)
+				.style("top", "300px")
+				.style("color", "#ffffff");
+				
+			notes_index += 1;
+			if (notes_index == time_notes.length) {
+				notes_index = 0;
+			}
+		}
+		
+		
+		setTimeout(timer, speeds[USER_SPEED]);
+	}
+	setTimeout(timer, speeds[USER_SPEED]);
+	
+  
+	function tick(e) {
+	  var k = 0.5 * e.alpha;  //0.04 default
+  
+	  // Push nodes toward their designated focus.
+	  nodes.forEach(function(o, i) {
+		var curr_act = o.act;
+		
+		// Make sleep more sluggish moving.
+		if (curr_act == "0") {
+			var damper = 1;  //default 0.6
+		} else {
+			var damper = 1;			
+		}
+		o.color = color(curr_act);
+	    o.y += (foci[curr_act].y - o.y) * k * damper;
+	    o.x += (foci[curr_act].x - o.x) * k * damper;
+	  });
+
+	  circle
+	  	  .each(collide(.5))
+	  	  .style("fill", function(d) { return d.color; })
+	      .attr("cx", function(d) { return d.x; })
+	      .attr("cy", function(d) { return d.y; });
+	}
+
+	// Resolve collisions between nodes.
+	function collide(alpha) {
+	  var quadtree = d3.geom.quadtree(nodes);
+	  return function(d) {
+	    var r = d.radius + maxRadius + padding,
+	        nx1 = d.x - r,
+	        nx2 = d.x + r,
+	        ny1 = d.y - r,
+	        ny2 = d.y + r;
+	    quadtree.visit(function(quad, x1, y1, x2, y2) {
+	      if (quad.point && (quad.point !== d)) {
+	        var x = d.x - quad.point.x,
+	            y = d.y - quad.point.y,
+	            l = Math.sqrt(x * x + y * y),
+	            r = d.radius + quad.point.radius + (d.act !== quad.point.act) * padding;
+	        if (l < r) {
+	          l = (l - r) / l * alpha;
+	          d.x -= x *= l;
+	          d.y -= y *= l;
+	          quad.point.x += x;
+	          quad.point.y += y;
+	        }
+	      }
+	      return x1 > nx2 || x2 < nx1 || y1 > ny2 || y2 < ny1;
+	    });
+	  };
+	}
+
+	
+	// Speed toggle
+	d3.selectAll(".togglebutton")
+      .on("click", function() {
+        if (d3.select(this).attr("data-val") == "slow") {
+            d3.select(".slow").classed("current", true);
+			d3.select(".medium").classed("current", false);
+            d3.select(".fast").classed("current", false);
+        } else if (d3.select(this).attr("data-val") == "medium") {
+            d3.select(".slow").classed("current", false);
+			d3.select(".medium").classed("current", true);
+            d3.select(".fast").classed("current", false);
+        } 
+		else {
+            d3.select(".slow").classed("current", false);
+			d3.select(".medium").classed("current", false);
+			d3.select(".fast").classed("current", true);
+        }
+		
+		USER_SPEED = d3.select(this).attr("data-val");
+    });
+}); // @end d3.tsv
+
+function color(activity) {
+	
+	var colorByActivity = {
+		"0": "#D1D1D1",
+		"1": "#F3A220",
+		"2": "#8C1D61",
+		"3": "#000000",
+		"4": "#D10026",
+		"5": "#0F91D7",
+		"6": "#A4FD00",
+		"7": "#ae001e",
+		"8": "#68c99e",
+		"9": "#a477c8",
+		"10": "#5C76EC",
+		"11": "#E773C3",
+		"12": "#799fd2",
+		"13": "#038a6c",
+		"14": "#cc87fa",
+		"15": "#ee8e76",
+		"16": "#bbbbbb",
+	}
+	
+	return colorByActivity[activity];
+	
+}
+
+
+
+// Output readable percent based on count.
+function readablePercent(n) {
+	
+	var pct = 100 * n / 1000;
+	if (pct < 1 && pct > 0) {
+		pct = "<1%";
+	} else {
+		pct = Math.round(pct) + "%";
+	}
+	
+	return pct;
+}
+
+
+// Minutes to time of day. Data is minutes from 12am. (or 00:00)
+function minutesToTime(m) {
+	var minutes = (m + 0*60) % 1440;  // set start time here
+	var hh = Math.floor(minutes / 60);
+	var ampm;
+	if (hh > 12) {
+		hh = hh - 12;
+		ampm = "pm";
+	} else if (hh == 12) {
+		ampm = "pm";
+	} else if (hh == 0) {
+		hh = 12;
+		ampm = "am";
+	} else {
+		ampm = "am";
+	}
+	var mm = minutes % 60;
+	if (mm < 10) {
+		mm = "0" + mm;
+	}
+	
+	return hh + ":" + mm + ampm
+}
+
+
+</script>
